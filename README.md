@@ -169,3 +169,7 @@ A few behaviours this depends on, verified rather than assumed:
   loaded. `--tools` is the only hard restriction.
 - A hit budget cap arrives as `subtype: error_max_budget_usd`, which is
   reported as `rate_limited` rather than a failure.
+
+## License
+
+[0BSD](LICENSE). Use it for anything, no attribution required.
