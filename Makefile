@@ -28,10 +28,7 @@ build:
 ## ui: build the React SPA into the embedded asset directory
 ui:
 	@command -v node >/dev/null || { echo "node is required to build the UI"; exit 1; }
-	@node -e 'const [maj,min]=process.versions.node.split(".").map(Number); \
-		if (maj<20 || (maj===20 && min<19)) { \
-			console.error("Node >=20.19 required for the Vite build, found "+process.versions.node); \
-			process.exit(1); }'
+	@node -e 'const [maj,min]=process.versions.node.split(".").map(Number); if (maj<20 || (maj===20 && min<19)) { console.error("Node >=20.19 required for the Vite build, found "+process.versions.node); process.exit(1); }'
 	cd web && npm install --no-audit --no-fund && npm run build
 	@echo "built $(UI_DIST)"
 
