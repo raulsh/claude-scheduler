@@ -105,6 +105,8 @@ snapshot:
 changelog:
   use: github
   sort: asc
+  # Drop the commit hash: the subject line is the useful part in the notes.
+  abbrev: -1
   filters:
     exclude:
       - "^docs:"
