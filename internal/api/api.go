@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/raulsh/claude-scheduler/internal/config"
 	"github.com/raulsh/claude-scheduler/internal/executor"
@@ -74,6 +73,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/run", s.handleRunTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/preflight", s.handleTaskPreflight)
+	mux.HandleFunc("POST /api/v1/tasks/{id}/pause", s.handlePauseTask)
 	mux.HandleFunc("POST /api/v1/tasks/{id}/resume", s.handleResumeTask)
 
 	// Executions.
@@ -95,15 +95,28 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/health/aws/{profile}/login", s.handleGetAWSLogin)
 	mux.HandleFunc("DELETE /api/v1/health/aws/{profile}/login", s.handleCancelAWSLogin)
 
+	// Key/value scratch space for runs. {key...} is a multi-segment
+	// wildcard so a slash-separated key stays one key.
+	mux.HandleFunc("GET /api/v1/kv", s.handleListKV)
+	mux.HandleFunc("GET /api/v1/kv/{key...}", s.handleGetKV)
+	mux.HandleFunc("PUT /api/v1/kv/{key...}", s.handleSetKV)
+	mux.HandleFunc("DELETE /api/v1/kv/{key...}", s.handleDeleteKV)
+
 	// The SPA owns every remaining path.
 	mux.Handle("/", s.spaHandler())
 
 	return s.withMiddleware(mux)
 }
 
-// withMiddleware applies logging, panic recovery and optional bearer auth.
+// withMiddleware applies panic recovery.
+//
+// There is no authentication layer: the API is reachable only through a Unix
+// socket, and that socket's file permissions are the access control. A
+// bearer token here would have to be shared with every CLI invocation and
+// with the browser, which never sent one, while adding nothing that the
+// socket permissions do not already enforce.
 func (s *Server) withMiddleware(next http.Handler) http.Handler {
-	return s.recoverPanics(s.authenticate(next))
+	return s.recoverPanics(next)
 }
 
 func (s *Server) recoverPanics(next http.Handler) http.Handler {
@@ -114,24 +127,6 @@ func (s *Server) recoverPanics(next http.Handler) http.Handler {
 				writeError(w, http.StatusInternalServerError, "internal error")
 			}
 		}()
-		next.ServeHTTP(w, r)
-	})
-}
-
-// authenticate enforces the bearer token when one is configured. With the
-// default loopback bind and no token this is a pass-through.
-func (s *Server) authenticate(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.cfg.Server.Token == "" || !strings.HasPrefix(r.URL.Path, "/api/") {
-			next.ServeHTTP(w, r)
-			return
-		}
-		const prefix = "Bearer "
-		got := r.Header.Get("Authorization")
-		if !strings.HasPrefix(got, prefix) || got[len(prefix):] != s.cfg.Server.Token {
-			writeError(w, http.StatusUnauthorized, "invalid or missing bearer token")
-			return
-		}
 		next.ServeHTTP(w, r)
 	})
 }

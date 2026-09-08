@@ -2,10 +2,15 @@
 set -e
 
 UNIT=claude-scheduler.service
+# The proxy is optional and may never have been enabled, but if it is running
+# it has to go too: it would otherwise survive against a socket that is being
+# removed.
+PROXY_UNIT=claude-scheduler-proxy.service
 
 case "$1" in
     remove|deconfigure)
         if [ -d /run/systemd/system ]; then
+            systemctl stop "$PROXY_UNIT" >/dev/null 2>&1 || true
             systemctl stop "$UNIT" >/dev/null 2>&1 || true
         fi
         ;;

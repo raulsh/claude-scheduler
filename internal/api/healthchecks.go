@@ -240,6 +240,42 @@ func (s *Server) handleCancelAWSLogin(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"cancelled": profile})
 }
 
+// handlePauseTask pauses a schedule.
+//
+// This exists rather than routing pause through PATCH because
+// handleUpdateTask revalidates the whole task, so a task whose cron
+// expression no longer parses could not be paused: precisely the task
+// someone is most likely to be reaching for the pause button on.
+func (s *Server) handlePauseTask(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid task id")
+		return
+	}
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	// A body is optional here, so a decode failure on an empty one is fine.
+	_ = decodeJSON(r, &body)
+	if body.Reason == "" {
+		body.Reason = "paused from the command line"
+	}
+
+	if err := s.store.SetTaskPaused(r.Context(), id, true, body.Reason); err != nil {
+		writeStoreError(w, err, "pause task")
+		return
+	}
+	s.reloadSchedules(r.Context())
+
+	task, err := s.store.GetTask(r.Context(), id)
+	if err != nil {
+		writeStoreError(w, err, "get task")
+		return
+	}
+	writeJSON(w, http.StatusOK, task)
+}
+
 // handleResumeTask clears a pause, typically after the dependency that
 // caused it has been repaired.
 func (s *Server) handleResumeTask(w http.ResponseWriter, r *http.Request) {

@@ -11,6 +11,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -178,20 +180,28 @@ func (e *Executor) Run(ctx context.Context, task *store.Task, exec *store.Execut
 
 	sessionID := uuid.NewString()
 	opts := claude.RunOptions{
-		Prompt:            task.Prompt,
-		Model:             task.Model,
-		SessionID:         sessionID,
-		Cwd:               task.Cwd,
-		AllowedTools:      task.AllowedTools,
-		Tools:             task.Tools,
-		BypassPermissions: task.BypassPermissions,
-		MaxBudgetUSD:      budget,
+		Prompt:             task.Prompt,
+		Model:              task.Model,
+		SessionID:          sessionID,
+		Cwd:                task.Cwd,
+		AllowedTools:       task.AllowedTools,
+		Tools:              task.Tools,
+		BypassPermissions:  task.BypassPermissions,
+		MaxBudgetUSD:       budget,
+		AppendSystemPrompt: basePrompt(task),
 	}
 
 	args := cli.Args(opts)
 	cmd := commandContext(runCtx, cli.Path, args...)
 	cmd.Dir = workingDir(task.Cwd)
-	cmd.Env = os.Environ()
+	// A run reaches the scheduler over the same socket the CLI uses, so a
+	// task can carry state between executions with `claude-scheduler kv`
+	// instead of inventing a file convention of its own. Reading the socket
+	// from the environment means a task needs no configuration at all.
+	cmd.Env = append(os.Environ(),
+		"CLAUDE_SCHEDULER_SOCKET="+e.cfg.Server.Socket,
+		"CLAUDE_SCHEDULER_EXECUTION_ID="+strconv.FormatInt(exec.ID, 10),
+	)
 	// A dedicated process group means cancelling kills the CLI's children
 	// too; without it they outlive the run and keep working.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -516,6 +526,28 @@ func exitCode(err error) (int, bool) {
 		return ee.ExitCode(), true
 	}
 	return 0, false
+}
+
+// basePrompt is what the scheduler adds to the CLI's system prompt on every
+// run: a description of the key/value store, so a task can carry state
+// between executions without its own prompt having to explain the CLI first.
+// The text itself makes the offer conditional, and a run whose prompt needs
+// no state should ignore it.
+//
+// It is withheld from a run that has no Bash tool, which cannot execute a
+// command at all: there the offer would only spend tokens and invite a
+// denial. A nil tool set is the CLI's default set, which includes Bash.
+func basePrompt(task *store.Task) string {
+	if task.Tools != nil && !slices.ContainsFunc(task.Tools, isBashTool) {
+		return ""
+	}
+	return claude.KVBasePrompt
+}
+
+// isBashTool matches the tool name loosely, since the set is typed by hand
+// in the task form and "bash" is the obvious thing to type.
+func isBashTool(tool string) bool {
+	return strings.EqualFold(strings.TrimSpace(tool), "Bash")
 }
 
 // workingDir falls back to a directory that certainly exists, since the CLI

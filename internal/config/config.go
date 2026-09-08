@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -27,19 +26,63 @@ type Config struct {
 }
 
 type Server struct {
+	// Socket is the Unix socket the daemon serves the API on. Access control
+	// is the socket's file permissions: anything that can write to it can
+	// start a run, so there is no token to configure.
+	Socket string `yaml:"socket"`
+	// SocketMode is applied to the socket file after binding, because the
+	// kernel would otherwise subtract the daemon's umask from 0777.
+	SocketMode FileMode `yaml:"socket_mode"`
+
+	// Bind and Port are no longer used: the daemon does not listen on a TCP
+	// port at all, and `claude-scheduler proxy` exposes one on demand. They
+	// are kept only so that a config file carried over from an earlier
+	// version can be warned about rather than silently ignored.
 	Bind string `yaml:"bind"`
 	Port int    `yaml:"port"`
-	// Token, when non-empty, is required as a bearer token on /api requests.
-	// Empty means no auth, which is safe only while Bind stays loopback.
-	Token string `yaml:"token"`
 }
 
-// Addr renders the listen address.
-func (s Server) Addr() string { return fmt.Sprintf("%s:%d", s.Bind, s.Port) }
+// LegacyTCPKeys reports whether the config still asks for a TCP listener.
+func (s Server) LegacyTCPKeys() bool { return s.Bind != "" || s.Port != 0 }
 
-// IsLoopback reports whether the bind address is confined to this machine.
-func (s Server) IsLoopback() bool {
-	return s.Bind == "127.0.0.1" || s.Bind == "localhost" || s.Bind == "::1"
+// DefaultSocket is where the packaged service listens. systemd creates the
+// parent through RuntimeDirectory= and removes it on stop, which also clears
+// the socket.
+const DefaultSocket = "/run/claude-scheduler/scheduler.sock"
+
+// maxSocketPath is the usable length of a Unix socket path. sun_path is a
+// fixed 108-byte field including its terminator, and a path that overruns it
+// fails at bind with a bare "invalid argument" that says nothing about
+// length, so it is worth rejecting with an explanation instead.
+const maxSocketPath = 104
+
+// Deprecations lists retired settings still present in the file, so an
+// upgraded install is told why they stopped working instead of finding out
+// when the web UI no longer answers. yaml.v3 ignores unknown keys, so
+// without the vestigial fields these would vanish without a word.
+func (c Config) Deprecations() []string {
+	var out []string
+	if c.Server.LegacyTCPKeys() {
+		out = append(out, "server.bind and server.port are ignored: the daemon listens "+
+			"only on server.socket. To serve a TCP port, run `claude-scheduler proxy`.")
+	}
+	return out
+}
+
+// ValidateSocketPath rejects socket paths that cannot work, with a reason.
+func ValidateSocketPath(path string) error {
+	switch {
+	case path == "":
+		return errors.New("is empty")
+	case !filepath.IsAbs(path):
+		// systemd runs the service with / as its working directory, so a
+		// relative path would resolve somewhere nobody intended.
+		return fmt.Errorf("%q is not an absolute path", path)
+	case len(path) > maxSocketPath:
+		return fmt.Errorf("%q is %d bytes; a unix socket path cannot exceed %d",
+			path, len(path), maxSocketPath)
+	}
+	return nil
 }
 
 type Paths struct {
@@ -97,7 +140,10 @@ type Retention struct {
 // Default returns the baseline configuration before file and env overrides.
 func Default() Config {
 	return Config{
-		Server: Server{Bind: "127.0.0.1", Port: 9977},
+		Server: Server{
+			Socket:     DefaultSocket,
+			SocketMode: 0o660,
+		},
 		Paths: Paths{
 			DataDir: "/var/lib/claude-scheduler",
 			LogDir:  "/var/log/claude-scheduler",
@@ -151,16 +197,8 @@ func Load(path string) (Config, error) {
 // applyEnv overlays CLAUDE_SCHEDULER_* variables. Only the settings worth
 // overriding per-invocation are wired up; the file covers the rest.
 func applyEnv(cfg *Config) {
-	if v := os.Getenv("CLAUDE_SCHEDULER_BIND"); v != "" {
-		cfg.Server.Bind = v
-	}
-	if v := os.Getenv("CLAUDE_SCHEDULER_PORT"); v != "" {
-		if n, err := strconv.Atoi(v); err == nil {
-			cfg.Server.Port = n
-		}
-	}
-	if v := os.Getenv("CLAUDE_SCHEDULER_TOKEN"); v != "" {
-		cfg.Server.Token = v
+	if v := os.Getenv("CLAUDE_SCHEDULER_SOCKET"); v != "" {
+		cfg.Server.Socket = v
 	}
 	if v := os.Getenv("CLAUDE_SCHEDULER_DATA_DIR"); v != "" {
 		cfg.Paths.DataDir = v
@@ -207,15 +245,23 @@ func lookBinary(name string, fallbacks ...string) string {
 func (c Config) Validate() error {
 	var problems []string
 
-	if c.Server.Port < 1 || c.Server.Port > 65535 {
-		problems = append(problems, fmt.Sprintf("server.port %d out of range", c.Server.Port))
+	if err := ValidateSocketPath(c.Server.Socket); err != nil {
+		problems = append(problems, "server.socket: "+err.Error())
 	}
-	if c.Server.Bind == "" {
-		problems = append(problems, "server.bind is empty")
-	}
-	if !c.Server.IsLoopback() && c.Server.Token == "" {
-		problems = append(problems, "server.token is required when server.bind is not loopback: "+
-			"a non-loopback bind without auth exposes arbitrary code execution to the network")
+	// The socket's permissions are the API's only access control, so a mode
+	// that lets anyone connect is a hard error rather than a warning.
+	// Connecting to a Unix socket requires the write bit, which is why
+	// other-write is the dangerous one: it would let any local user start
+	// runs as the service user.
+	switch mode := c.Server.SocketMode; {
+	case mode&0o002 != 0:
+		problems = append(problems, fmt.Sprintf(
+			"server.socket_mode %s grants write to other, which would let any local "+
+				"user start runs as this user; use 0660 or 0600", mode))
+	case mode&0o600 != 0o600:
+		problems = append(problems, fmt.Sprintf(
+			"server.socket_mode %s does not grant the owner read and write, so the "+
+				"daemon could not use its own socket", mode))
 	}
 	if c.Paths.DataDir == "" {
 		problems = append(problems, "paths.data_dir is empty")

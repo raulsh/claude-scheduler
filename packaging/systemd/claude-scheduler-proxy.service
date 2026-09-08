@@ -1,0 +1,30 @@
+[Unit]
+Description=Claude Scheduler web UI port - forwards a loopback port to the scheduler socket
+Documentation=https://github.com/raulsh/claude-scheduler
+# The proxy is useless without the daemon, and should come and go with it.
+After=claude-scheduler.service
+BindsTo=claude-scheduler.service
+
+[Service]
+# Installed but NOT enabled. The daemon listens only on its socket, whose
+# file permissions are its access control; a browser cannot open a socket,
+# so viewing the web UI needs this port. Enabling it is deliberate because a
+# loopback port carries no authentication, which means any local user can
+# reach the API and start runs as the service user. Enable it with:
+#   sudo systemctl enable --now claude-scheduler-proxy
+ExecStart=/usr/bin/claude-scheduler proxy --config /etc/claude-scheduler/config.yaml
+Restart=on-failure
+RestartSec=5s
+
+# The proxy holds no state and touches no credentials, so it can be locked
+# down far harder than the scheduler itself.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

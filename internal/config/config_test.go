@@ -86,25 +86,79 @@ func TestMissingFileFallsBackToDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a missing config should not be an error: %v", err)
 	}
-	if cfg.Server.Port != 9977 {
-		t.Errorf("Port = %d, want the default 9977", cfg.Server.Port)
+	if cfg.Server.Socket != DefaultSocket {
+		t.Errorf("Socket = %q, want the default %q", cfg.Server.Socket, DefaultSocket)
 	}
 }
 
-func TestNonLoopbackRequiresToken(t *testing.T) {
-	path := writeConfig(t, "server:\n  bind: 0.0.0.0\n  port: 9977\n")
+// TestRejectsWorldWritableSocketMode guards the access-control story:
+// connecting to a Unix socket needs the write bit, so other-write would let
+// any local user start runs as the service user.
+func TestRejectsWorldWritableSocketMode(t *testing.T) {
+	path := writeConfig(t, "server:\n  socket_mode: 0666\n")
 	_, err := Load(path)
 	if err == nil {
-		t.Fatal("binding beyond loopback without a token should be rejected")
+		t.Fatal("a world-writable socket mode should be rejected")
 	}
-	if !strings.Contains(err.Error(), "token") {
-		t.Errorf("error should explain the token requirement: %v", err)
+	if !strings.Contains(err.Error(), "socket_mode") {
+		t.Errorf("error should name the field: %v", err)
 	}
+}
 
-	// With a token it is allowed.
-	path = writeConfig(t, "server:\n  bind: 0.0.0.0\n  port: 9977\n  token: secret\n")
-	if _, err := Load(path); err != nil {
-		t.Errorf("a non-loopback bind with a token should be accepted: %v", err)
+func TestRejectsRelativeSocket(t *testing.T) {
+	path := writeConfig(t, "server:\n  socket: ./scheduler.sock\n")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("a relative socket path should be rejected")
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("error should explain the requirement: %v", err)
+	}
+}
+
+// TestRejectsOverlongSocket covers the sun_path limit, whose native failure
+// is a bare "invalid argument" from bind that explains nothing.
+func TestRejectsOverlongSocket(t *testing.T) {
+	long := "/" + strings.Repeat("a", 120) + ".sock"
+	path := writeConfig(t, "server:\n  socket: "+long+"\n")
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("an overlong socket path should be rejected")
+	}
+	if !strings.Contains(err.Error(), "unix socket path") {
+		t.Errorf("error should explain the length limit: %v", err)
+	}
+}
+
+// TestSocketModeSpellings pins the octal reading. yaml.v3 would resolve a
+// bare 660 as decimal, which is mode 01224 and not what anyone means.
+func TestSocketModeSpellings(t *testing.T) {
+	for _, spelling := range []string{"0660", "0o660", "660", `"0660"`} {
+		path := writeConfig(t, "server:\n  socket_mode: "+spelling+"\n")
+		cfg, err := Load(path)
+		if err != nil {
+			t.Fatalf("socket_mode: %s: %v", spelling, err)
+		}
+		if cfg.Server.SocketMode != 0o660 {
+			t.Errorf("socket_mode: %s parsed as %s, want 0660", spelling, cfg.Server.SocketMode)
+		}
+	}
+}
+
+// TestLegacyTCPKeysAreReported guards the upgrade path: yaml.v3 ignores
+// unknown keys, so a carried-over bind/port would otherwise vanish silently.
+func TestLegacyTCPKeysAreReported(t *testing.T) {
+	path := writeConfig(t, "server:\n  bind: 0.0.0.0\n  port: 9977\n")
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("a config with retired keys should still load: %v", err)
+	}
+	notes := cfg.Deprecations()
+	if len(notes) == 0 {
+		t.Fatal("server.bind and server.port should be reported as obsolete")
+	}
+	if !strings.Contains(notes[0], "proxy") {
+		t.Errorf("the note should point at the proxy command: %q", notes[0])
 	}
 }
 
@@ -120,15 +174,15 @@ func TestNegativeDurationsRejected(t *testing.T) {
 }
 
 func TestEnvOverridesFile(t *testing.T) {
-	path := writeConfig(t, "server:\n  port: 1234\n")
+	path := writeConfig(t, "server:\n  socket: /run/from-file.sock\n")
 
-	t.Setenv("CLAUDE_SCHEDULER_PORT", "4321")
+	t.Setenv("CLAUDE_SCHEDULER_SOCKET", "/run/from-env.sock")
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Server.Port != 4321 {
-		t.Errorf("Port = %d, want the environment override 4321", cfg.Server.Port)
+	if cfg.Server.Socket != "/run/from-env.sock" {
+		t.Errorf("Socket = %q, want the environment override", cfg.Server.Socket)
 	}
 }
 

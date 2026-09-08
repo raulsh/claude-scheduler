@@ -23,8 +23,10 @@ import (
 var schemaSQL string
 
 // schemaVersion is bumped whenever schema.sql changes in a way that needs
-// migrating. Version 1 is the initial schema.
-const schemaVersion = 2
+// migrating. Version 1 is the initial schema. Version 3 adds the kv table,
+// which needs no ALTER because CREATE TABLE IF NOT EXISTS creates it on an
+// existing database when the whole schema is re-applied.
+const schemaVersion = 3
 
 // Store provides access to the scheduler database.
 type Store struct {

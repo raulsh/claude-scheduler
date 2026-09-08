@@ -112,3 +112,20 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_sent ON notifications(sent_at DESC);
+
+-- Scratch space for runs, so a task can carry state between executions
+-- without inventing a file convention of its own.
+--
+-- Values are BLOBs because they are loaded from files and piped through the
+-- CLI unchanged: a TEXT column would impose UTF-8 on data that is sometimes
+-- a gzip blob or a binary export, and would corrupt it silently.
+CREATE TABLE IF NOT EXISTS kv (
+    key        TEXT PRIMARY KEY,
+    value      BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+    -- NULL means the value never expires, which is the common case.
+    expires_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_kv_expires ON kv (expires_at) WHERE expires_at IS NOT NULL;

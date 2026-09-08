@@ -1,8 +1,11 @@
 package store
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -477,5 +480,236 @@ func TestInvalidCursorIsRejected(t *testing.T) {
 	s := newTestStore(t)
 	if _, _, err := s.ListExecutions(context.Background(), ExecutionFilter{Cursor: "!!not-base64!!"}); err == nil {
 		t.Error("a malformed cursor should be rejected")
+	}
+}
+
+func TestKVRoundTrip(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	// Bytes that a TEXT column would mangle: length() on TEXT counts
+	// characters and stops at the first NUL, and invalid UTF-8 is not
+	// something SQLite promises to preserve there.
+	value := []byte{'h', 'i', 0x00, 0xff, 0xfe, '\n'}
+	if err := s.SetKV(ctx, "bin/blob", value, time.Time{}); err != nil {
+		t.Fatalf("SetKV: %v", err)
+	}
+
+	got, err := s.GetKV(ctx, "bin/blob")
+	if err != nil {
+		t.Fatalf("GetKV: %v", err)
+	}
+	if !bytes.Equal(got.Value, value) {
+		t.Errorf("Value = %v, want %v", got.Value, value)
+	}
+	if got.Size != int64(len(value)) {
+		t.Errorf("Size = %d, want %d", got.Size, len(value))
+	}
+	if got.Expires() {
+		t.Error("a value stored without a TTL should not expire")
+	}
+}
+
+// TestKVUpsertPreservesCreatedAt pins created_at against a future
+// "excluded.created_at" creeping into the conflict clause.
+func TestKVUpsertPreservesCreatedAt(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.SetKV(ctx, "k", []byte("first"), time.Time{}); err != nil {
+		t.Fatalf("SetKV: %v", err)
+	}
+	first, err := s.GetKV(ctx, "k")
+	if err != nil {
+		t.Fatalf("GetKV: %v", err)
+	}
+
+	// The stored format keeps milliseconds, so two writes inside the same
+	// millisecond would be indistinguishable.
+	time.Sleep(2 * time.Millisecond)
+	if err := s.SetKV(ctx, "k", []byte("second"), time.Time{}); err != nil {
+		t.Fatalf("SetKV: %v", err)
+	}
+
+	second, err := s.GetKV(ctx, "k")
+	if err != nil {
+		t.Fatalf("GetKV: %v", err)
+	}
+	if !second.CreatedAt.Equal(first.CreatedAt) {
+		t.Errorf("CreatedAt changed on rewrite: %v then %v", first.CreatedAt, second.CreatedAt)
+	}
+	if !second.UpdatedAt.After(first.UpdatedAt) {
+		t.Errorf("UpdatedAt did not advance: %v then %v", first.UpdatedAt, second.UpdatedAt)
+	}
+	if string(second.Value) != "second" {
+		t.Errorf("Value = %q, want the replacement", second.Value)
+	}
+}
+
+// TestKVSetWithoutTTLClearsExpiry pins the semantics of a plain set: it
+// replaces the whole entry, so a value cannot silently inherit an expiry
+// from a write nobody can see any more.
+func TestKVSetWithoutTTLClearsExpiry(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.SetKV(ctx, "k", []byte("v"), time.Now().Add(time.Hour)); err != nil {
+		t.Fatalf("SetKV: %v", err)
+	}
+	if err := s.SetKV(ctx, "k", []byte("v"), time.Time{}); err != nil {
+		t.Fatalf("SetKV: %v", err)
+	}
+
+	got, err := s.GetKV(ctx, "k")
+	if err != nil {
+		t.Fatalf("GetKV: %v", err)
+	}
+	if got.Expires() {
+		t.Errorf("a set with no TTL should clear the expiry, got %v", got.ExpiresAt)
+	}
+}
+
+func TestKVExpiredKeyIsNotFound(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	if err := s.SetKV(ctx, "gone", []byte("v"), time.Now().Add(-time.Minute)); err != nil {
+		t.Fatalf("SetKV: %v", err)
+	}
+
+	if _, err := s.GetKV(ctx, "gone"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetKV on an expired key = %v, want ErrNotFound", err)
+	}
+	entries, err := s.ListKV(ctx, "")
+	if err != nil {
+		t.Fatalf("ListKV: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("ListKV returned %d expired entries, want none", len(entries))
+	}
+
+	n, err := s.PurgeExpiredKV(ctx)
+	if err != nil {
+		t.Fatalf("PurgeExpiredKV: %v", err)
+	}
+	if n != 1 {
+		t.Errorf("PurgeExpiredKV = %d, want 1", n)
+	}
+	if n, _ := s.PurgeExpiredKV(ctx); n != 0 {
+		t.Errorf("a second purge removed %d rows, want 0", n)
+	}
+}
+
+// TestKVListPrefixIsExactNotGlob is the reason ListKV uses a range scan.
+// With LIKE prefix || '%' the % and _ cases below silently match too much,
+// and nothing else in the suite would notice.
+func TestKVListPrefixIsExactNotGlob(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for _, key := range []string{"report/a", "report/b", "report_x", "reportZ", "other", "a%b", "a_b", "axb"} {
+		if err := s.SetKV(ctx, key, []byte("v"), time.Time{}); err != nil {
+			t.Fatalf("SetKV %q: %v", key, err)
+		}
+	}
+
+	cases := map[string][]string{
+		"report/": {"report/a", "report/b"},
+		"a%":      {"a%b"},
+		"a_":      {"a_b"},
+		"":        {"a%b", "a_b", "axb", "other", "report/a", "report/b", "reportZ", "report_x"},
+	}
+	for prefix, want := range cases {
+		entries, err := s.ListKV(ctx, prefix)
+		if err != nil {
+			t.Fatalf("ListKV(%q): %v", prefix, err)
+		}
+		got := make([]string, len(entries))
+		for i, e := range entries {
+			got[i] = e.Key
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("ListKV(%q) = %v, want %v", prefix, got, want)
+		}
+	}
+}
+
+// TestKVListReturnsMetadataOnly guards against the value projection being
+// folded back into the listing, which would pull every stored byte through
+// the socket on `kv list`.
+func TestKVListReturnsMetadataOnly(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	payload := bytes.Repeat([]byte("x"), 4096)
+	if err := s.SetKV(ctx, "big", payload, time.Time{}); err != nil {
+		t.Fatalf("SetKV: %v", err)
+	}
+
+	entries, err := s.ListKV(ctx, "")
+	if err != nil {
+		t.Fatalf("ListKV: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if len(entries[0].Value) != 0 {
+		t.Errorf("ListKV returned %d value bytes, want none", len(entries[0].Value))
+	}
+	if entries[0].Size != int64(len(payload)) {
+		t.Errorf("Size = %d, want %d", entries[0].Size, len(payload))
+	}
+}
+
+// TestKVEmptyValue covers the nil-versus-empty blob binding: a nil slice
+// binds as NULL, which the NOT NULL column rejects, so SetKV normalises it.
+func TestKVEmptyValue(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	for name, value := range map[string][]byte{"nil": nil, "empty": {}} {
+		if err := s.SetKV(ctx, name, value, time.Time{}); err != nil {
+			t.Fatalf("SetKV(%s): %v", name, err)
+		}
+		got, err := s.GetKV(ctx, name)
+		if err != nil {
+			t.Fatalf("GetKV(%s): %v", name, err)
+		}
+		if got.Value == nil {
+			t.Errorf("GetKV(%s) returned a nil value, want an empty slice", name)
+		}
+		if len(got.Value) != 0 || got.Size != 0 {
+			t.Errorf("GetKV(%s) = %v (size %d), want empty", name, got.Value, got.Size)
+		}
+	}
+}
+
+func TestKVDeleteMissingIsNotFound(t *testing.T) {
+	s := newTestStore(t)
+	if err := s.DeleteKV(context.Background(), "absent"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("DeleteKV = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPrefixUpperBound(t *testing.T) {
+	cases := []struct {
+		prefix string
+		want   string
+		ok     bool
+	}{
+		{"a", "b", true},
+		{"report/", "report0", true},
+		{"az", "a{", true},
+		{"a\xff", "b", true},
+		// Every byte is 0xff, so no key sorts after the prefix and the
+		// lower bound alone is the correct filter.
+		{"\xff\xff", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		got, ok := prefixUpperBound(c.prefix)
+		if got != c.want || ok != c.ok {
+			t.Errorf("prefixUpperBound(%q) = %q, %v; want %q, %v", c.prefix, got, ok, c.want, c.ok)
+		}
 	}
 }

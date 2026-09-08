@@ -46,6 +46,8 @@ archives:
         dst: config.yaml
       - src: packaging/systemd/claude-scheduler.service
         dst: claude-scheduler.service
+      - src: packaging/systemd/claude-scheduler-proxy.service
+        dst: claude-scheduler-proxy.service
 
 nfpms:
   - id: deb
@@ -80,6 +82,12 @@ nfpms:
     contents:
       - src: packaging/systemd/claude-scheduler.service
         dst: /lib/systemd/system/claude-scheduler.service
+        file_info:
+          mode: 0644
+      # Installed but not enabled: it opens an unauthenticated loopback port,
+      # so turning it on is a deliberate choice.
+      - src: packaging/systemd/claude-scheduler-proxy.service
+        dst: /lib/systemd/system/claude-scheduler-proxy.service
         file_info:
           mode: 0644
       - src: packaging/config.yaml
@@ -123,6 +131,14 @@ release:
     ```sh
     curl -fLO https://github.com/raulsh/claude-scheduler/releases/download/{{ .Tag }}/claude-scheduler_{{ .Version }}_amd64.deb
     sudo dpkg -i claude-scheduler_{{ .Version }}_amd64.deb
+    claude-scheduler task list
+    ```
+
+    The scheduler listens on a Unix socket, so the CLI works straight away and
+    no port is opened. For the web UI:
+
+    ```sh
+    sudo systemctl enable --now claude-scheduler-proxy
     xdg-open http://127.0.0.1:9977
     ```
 

@@ -1,7 +1,11 @@
 # Local development configuration. Not shipped in the package.
 server:
-  bind: 127.0.0.1
-  port: 9977
+  # An absolute path under the user's runtime directory: /run/claude-scheduler
+  # is not writable by a normal user, and a relative path would resolve
+  # against the process working directory, which is why it is rejected.
+  # Overridden by `make run`, which fills in $XDG_RUNTIME_DIR.
+  socket: /tmp/claude-scheduler-dev.sock
+  socket_mode: 0600
 paths:
   data_dir: ./.dev/data
   log_dir: ./.dev/logs

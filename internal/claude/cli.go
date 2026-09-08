@@ -117,6 +117,12 @@ type RunOptions struct {
 	MaxBudgetUSD float64
 	Timeout      time.Duration
 
+	// AppendSystemPrompt is extra system-prompt text for the run. It appends
+	// to the CLI's own system prompt rather than replacing it, so a run keeps
+	// everything the CLI normally tells the model and gains only what the
+	// scheduler has to add. Empty means the CLI's system prompt, untouched.
+	AppendSystemPrompt string
+
 	// ExtraMCPConfig is an optional --mcp-config JSON payload.
 	ExtraMCPConfig string
 }
@@ -162,6 +168,9 @@ func (c CLI) Args(opts RunOptions) []string {
 		args = append(args, "--tools", strings.Join(opts.Tools, ","))
 	}
 
+	if opts.AppendSystemPrompt != "" {
+		args = append(args, "--append-system-prompt", opts.AppendSystemPrompt)
+	}
 	if opts.MaxBudgetUSD > 0 {
 		args = append(args, "--max-budget-usd", strconv.FormatFloat(opts.MaxBudgetUSD, 'f', -1, 64))
 	}

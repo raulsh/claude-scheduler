@@ -11,10 +11,21 @@ Restart=on-failure
 RestartSec=5s
 TimeoutStopSec=30s
 
-# State and logs, created and owned by the service user automatically.
+# State, logs and runtime, created and owned by the service user
+# automatically. RuntimeDirectory gives /run/claude-scheduler for the API
+# socket, and systemd removes it when the unit stops, which is also what
+# clears a socket left behind by a SIGKILL.
 StateDirectory=claude-scheduler
 LogsDirectory=claude-scheduler
 ConfigurationDirectory=claude-scheduler
+RuntimeDirectory=claude-scheduler
+RuntimeDirectoryMode=0750
+
+# bind(2) creates the socket with 0777 minus the umask, and the daemon then
+# chmods it to server.socket_mode. This bounds that window: connecting to a
+# unix socket needs the write bit, and 0027 withholds it from everyone but
+# the owner and group.
+UMask=0027
 
 # The service user, HOME, and session bus are machine-specific and are
 # written by the package's postinst into:

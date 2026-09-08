@@ -33,6 +33,15 @@ there is nothing to configure by hand:
 
 ```sh
 sudo systemctl start claude-scheduler
+claude-scheduler task list
+```
+
+The service listens on a Unix socket, not a port, so the CLI works immediately
+and nothing is exposed to the network. A browser cannot open a socket, so the
+web UI needs a loopback port, which is a second unit shipped disabled:
+
+```sh
+sudo systemctl enable --now claude-scheduler-proxy
 xdg-open http://127.0.0.1:9977
 ```
 
@@ -111,15 +120,109 @@ A per-task **bypass** switch (`--dangerously-skip-permissions`) is available,
 off by default, badged in the UI wherever the task appears. With it on, a run
 can take any action as your user and both fields above are ignored.
 
+A task that uses the [key/value store](#keyvalue-store) needs `Bash` in its
+tool set and `Bash(claude-scheduler:*)` in its allowlist. This is the most
+likely reason a KV-using task looks broken: without the rule the call is
+denied, and the task carries no state forward while otherwise succeeding.
+
+## CLI
+
+Every command talks to the running service over its socket, using the same API
+the web UI does, so a change made here reloads the schedule exactly as one made
+in the browser would. Each command checks the socket is actually serving first
+and says so plainly when it is not.
+
+```sh
+claude-scheduler status                       # is it up, and what does it think
+claude-scheduler task list
+claude-scheduler task show <id|name>          # id or name, either works
+claude-scheduler task run <id|name> --follow  # trigger, then stream the transcript
+claude-scheduler task pause <id|name> --reason "why"
+claude-scheduler task resume <id|name>
+claude-scheduler task preflight <id|name>     # check dependencies without running
+claude-scheduler exec list --task <id|name> --limit 20
+claude-scheduler exec logs <id> --follow
+claude-scheduler exec cancel <id>
+claude-scheduler health --kind aws_profile --force
+```
+
+`--json` on any command emits the daemon's own JSON rather than a table, which
+is the same payload the HTTP API returns. Exit codes are meaningful, because
+tasks script against this: `0` success, `1` failure, `2` a usage mistake, `3`
+the daemon is unreachable, `4` not found.
+
+The socket is found from `--socket`, then `$CLAUDE_SCHEDULER_SOCKET`, then
+`server.socket` in the config if that file is readable, then the built-in
+default. A config you cannot read is not an error, so an unprivileged user
+still gets a working CLI.
+
+### Key/value store
+
+Somewhere for a task to keep state between runs, so carrying a cursor or
+yesterday's report forward does not mean inventing a file convention and
+getting its permissions right by hand.
+
+```sh
+claude-scheduler kv set report/cursor 8891        # a literal value
+claude-scheduler kv set job/state --file state.json
+cat state.json | claude-scheduler kv set job/state  # or piped
+claude-scheduler kv set scratch/x tmp --ttl 24h   # expires; 7d works too
+claude-scheduler kv get job/state                 # raw bytes, byte for byte
+claude-scheduler kv list --prefix job/
+claude-scheduler kv del job/state
+```
+
+Keys are one flat namespace, so prefixes like `report/` are the convention for
+grouping. Values are opaque bytes up to 1 MiB: what goes in comes back out
+identical, which is what makes `--file` and piping trustworthy. `kv get` adds
+no trailing newline, and writes nothing on a miss, so both of these work:
+
+```sh
+cursor=$(claude-scheduler kv get report/cursor) || cursor=0
+claude-scheduler kv get job/blob > restored.bin
+```
+
+**Using it from inside a task.** Every execution gets `CLAUDE_SCHEDULER_SOCKET`
+and `CLAUDE_SCHEDULER_EXECUTION_ID` in its environment, so a prompt can just
+call the CLI with no flags. Two things have to be true for that to work, and
+both are per-task settings covered in [Tools and permissions](#tools-and-permissions):
+
+- `Bash` must be in the task's tool set, since nothing else can run a command.
+- the allowlist needs a rule for it, `Bash(claude-scheduler:*)`. Without one the
+  run is denied; the denial is reported as the exact rule to add.
+
+A prompt does not have to explain any of this. Every run whose tool set can
+execute a command gets the store described to it in an appended system prompt
+(`--append-system-prompt`), covering the commands, the flat key namespace,
+TTLs and the exit code on a miss. The description is conditional on purpose:
+it says to use the store only when the task's own prompt calls for state that
+crosses runs, whether that is explicit ("save the cursor", "remember what you
+sent") or implied ("report only what changed since last time", "continue where
+the last run stopped"), and to ignore it entirely otherwise. So a task that
+needs a cursor can simply say so, while a task that needs nothing carried
+forward behaves as though the store were not there. The text lives in
+[`internal/claude/prompt.go`](internal/claude/prompt.go); a run with no `Bash`
+tool is not given it at all, since it could not act on it.
+
 ## Configuration
 
 `/etc/claude-scheduler/config.yaml` is a conffile, so your edits survive
 upgrades. Machine-specific values live in the generated drop-in at
 `/etc/systemd/system/claude-scheduler.service.d/10-user.conf` instead.
 
-Defaults bind `127.0.0.1:9977` with no auth. The API can start Claude Code
-runs, which execute code as the service user, so binding beyond loopback
-requires a bearer token, and the service refuses to start otherwise.
+The API is served on `/run/claude-scheduler/scheduler.sock`, and the socket's
+file permissions are the access control. There is no token and no listening
+port: the API can start Claude Code runs, which execute code as the service
+user, so who may connect is a question for the filesystem. `server.socket_mode`
+defaults to `0660`, which admits the service user and its group; `0600`
+restricts it to that user alone, and a mode granting write to others is
+rejected outright.
+
+`claude-scheduler proxy` forwards a loopback TCP port into that socket for the
+web UI. It performs no authentication, so it refuses to bind anywhere but
+loopback, and it is worth being clear that a port is weaker than the socket it
+fronts: every local user can reach a loopback port, while the socket is limited
+to one user and one group.
 
 ## Development
 
@@ -127,7 +230,8 @@ requires a bearer token, and the service refuses to start otherwise.
 make ui        # build the SPA (needs Node >= 20.19; 22 is pinned)
 make build     # static binary with the SPA embedded
 make check     # gofmt, vet, tests
-make run       # run against ./dev-config.yaml
+make run       # run the daemon against ./dev-config.yaml, on a socket
+make proxy     # expose that socket on :9977, for the browser and Vite
 make dev       # Vite dev server, proxying /api to :9977
 make snapshot  # build the release artifacts locally, publishing nothing
 ```

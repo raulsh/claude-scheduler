@@ -6,11 +6,22 @@
 # so this file stays untouched across upgrades.
 
 server:
-  # Loopback only. The API can start Claude Code runs, which execute code as
-  # the service user, so binding beyond loopback requires a token below.
-  bind: 127.0.0.1
-  port: 9977
-  # token: ""   # required if bind is not loopback
+  # The API is served on a Unix socket, and the socket's file permissions are
+  # the access control: whoever can connect can start Claude Code runs, which
+  # execute code as the service user. There is no token, and the daemon opens
+  # no network port at all.
+  #
+  # systemd creates and owns the parent directory through
+  # RuntimeDirectory=claude-scheduler in the unit.
+  socket: /run/claude-scheduler/scheduler.sock
+  # 0660 lets the service user and its group manage the scheduler; 0600
+  # restricts it to that user alone. Other-write is refused, since it would
+  # let any local user on the machine start runs.
+  socket_mode: 0660
+
+  # The web UI needs a TCP port, because a browser cannot open a socket:
+  #   sudo systemctl enable --now claude-scheduler-proxy
+  # That port has no authentication, so it binds loopback only.
 
 paths:
   data_dir: /var/lib/claude-scheduler

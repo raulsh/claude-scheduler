@@ -393,3 +393,34 @@ sleep 60
 
 	exe.Cancel(first.ID)
 }
+
+// TestBasePromptFollowsBashAvailability pins the one condition the appended
+// prompt is gated on. Describing the KV store to a run that has no way to
+// run a command spends tokens on an offer it cannot take up, and a nil tool
+// set has to keep the offer because nil means the CLI's default set.
+func TestBasePromptFollowsBashAvailability(t *testing.T) {
+	cases := []struct {
+		name  string
+		tools []string
+		want  bool
+	}{
+		{"default set", nil, true},
+		{"bash present", []string{"Read", "Bash"}, true},
+		{"lowercase", []string{"bash"}, true},
+		{"no bash", []string{"Read", "Grep"}, false},
+		{"no tools at all", []string{}, false},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := basePrompt(&store.Task{Tools: tc.tools})
+			if (got != "") != tc.want {
+				t.Errorf("basePrompt with tools %v: appended = %v, want %v",
+					tc.tools, got != "", tc.want)
+			}
+			if tc.want && !strings.Contains(got, "claude-scheduler kv") {
+				t.Error("appended prompt does not mention the kv command")
+			}
+		})
+	}
+}

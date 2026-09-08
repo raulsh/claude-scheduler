@@ -17,6 +17,11 @@ UI_DIST := internal/webui/dist
 
 .PHONY: all build ui test vet fmt check deb snapshot clean dev run install-local uninstall-local help
 
+# The dev socket lives under the user's runtime directory:
+# /run/claude-scheduler belongs to root, and a relative path is rejected
+# because it would resolve against the process working directory.
+DEV_SOCKET ?= $(if $(XDG_RUNTIME_DIR),$(XDG_RUNTIME_DIR),/tmp)/claude-scheduler-dev.sock
+
 all: build
 
 ## build: compile the static binary (frontend must already be built)
@@ -57,6 +62,7 @@ deb: build
 	@mkdir -p $(STAGE)/DEBIAN dist
 	install -D -m 0755 $(BIN) $(STAGE)/usr/bin/$(PKG)
 	install -D -m 0644 packaging/systemd/$(PKG).service $(STAGE)/lib/systemd/system/$(PKG).service
+	install -D -m 0644 packaging/systemd/$(PKG)-proxy.service $(STAGE)/lib/systemd/system/$(PKG)-proxy.service
 	install -D -m 0644 packaging/config.yaml $(STAGE)/etc/$(PKG)/config.yaml
 	install -D -m 0644 LICENSE $(STAGE)/usr/share/doc/$(PKG)/copyright
 	install -D -m 0644 packaging/debian/conffiles $(STAGE)/DEBIAN/conffiles
@@ -79,13 +85,17 @@ snapshot:
 	@command -v goreleaser >/dev/null || { echo "goreleaser is required: https://goreleaser.com/install"; exit 1; }
 	goreleaser release --snapshot --clean
 
+## proxy: expose the dev scheduler on :9977 for the browser and Vite
+proxy: build
+	./$(BIN) proxy --config ./dev-config.yaml --socket $(DEV_SOCKET) --log-level debug
+
 ## dev: run the Vite dev server against a locally running scheduler
 dev:
 	cd web && npm run dev
 
 ## run: run the scheduler against a local config, no install needed
 run: build
-	./$(BIN) serve --config ./dev-config.yaml --log-level debug
+	./$(BIN) serve --config ./dev-config.yaml --socket $(DEV_SOCKET) --log-level debug
 
 ## install-local: build and install the .deb on this machine
 install-local: deb

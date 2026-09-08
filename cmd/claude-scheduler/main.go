@@ -17,9 +17,11 @@ import (
 	"time"
 
 	"github.com/raulsh/claude-scheduler/internal/api"
+	"github.com/raulsh/claude-scheduler/internal/cli"
 	"github.com/raulsh/claude-scheduler/internal/config"
 	"github.com/raulsh/claude-scheduler/internal/executor"
 	"github.com/raulsh/claude-scheduler/internal/health"
+	"github.com/raulsh/claude-scheduler/internal/ipc"
 	"github.com/raulsh/claude-scheduler/internal/notify"
 	"github.com/raulsh/claude-scheduler/internal/scheduler"
 	"github.com/raulsh/claude-scheduler/internal/sdnotify"
@@ -36,53 +38,76 @@ const defaultConfigPath = "/etc/claude-scheduler/config.yaml"
 
 func main() {
 	api.Version = version
+	// No defers here: os.Exit skips them, and runServe owns every defer it
+	// needs.
+	os.Exit(dispatch(os.Args[1:]))
+}
 
-	if len(os.Args) < 2 {
+func dispatch(args []string) int {
+	if len(args) == 0 {
 		usage()
-		os.Exit(2)
+		return cli.ExitUsage
 	}
 
-	var err error
-	switch os.Args[1] {
+	switch args[0] {
 	case "serve":
-		err = runServe(os.Args[2:])
+		return report(runServe(args[1:]))
+	case "proxy":
+		return report(runProxy(args[1:]))
 	case "version", "--version", "-v":
 		fmt.Printf("claude-scheduler %s (commit %s, %s)\n", version, commit, runtime.Version())
+		return cli.ExitOK
 	case "help", "--help", "-h":
 		usage()
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", os.Args[1])
-		usage()
-		os.Exit(2)
+		return cli.ExitOK
 	}
 
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "error: "+err.Error())
-		os.Exit(1)
+	// Everything else is a client command, which reaches the daemon over
+	// its socket rather than being the daemon.
+	return cli.Run(args)
+}
+
+// report prints a daemon command's error and picks an exit code.
+func report(err error) int {
+	switch {
+	case err == nil:
+		return cli.ExitOK
+	case errors.Is(err, flag.ErrHelp):
+		// The flag set has already written the message and the flag list.
+		return cli.ExitUsage
 	}
+	fmt.Fprintln(os.Stderr, "error: "+err.Error())
+	return cli.ExitError
 }
 
 func usage() {
 	fmt.Fprint(os.Stderr, `claude-scheduler - scheduled Claude Code tasks with dependency healthchecks
 
-Usage:
-  claude-scheduler serve [flags]   Run the scheduler and web UI
+Daemon commands:
+  claude-scheduler serve [flags]   Run the scheduler on its Unix socket
+  claude-scheduler proxy [flags]   Serve a loopback port that forwards to the socket
   claude-scheduler version         Print version information
   claude-scheduler help            Show this message
 
 Serve flags:
   --config <path>   Configuration file (default `+defaultConfigPath+`)
-  --bind <addr>     Override the listen address
-  --port <n>        Override the listen port
+  --socket <path>   Override the socket path
   --log-level <l>   debug, info, warn or error (default info)
+
+Proxy flags:
+  --config <path>   Configuration file (default `+defaultConfigPath+`)
+  --socket <path>   Socket to forward to
+  --listen <addr>   Loopback address to serve (default 127.0.0.1:9977)
+  --log-level <l>   debug, info, warn or error (default info)
+
 `)
+	cli.Usage(os.Stderr)
 }
 
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	configPath := fs.String("config", defaultConfigPath, "configuration file path")
-	bind := fs.String("bind", "", "override the listen address")
-	port := fs.Int("port", 0, "override the listen port")
+	socket := fs.String("socket", "", "override the socket path")
 	logLevel := fs.String("log-level", "info", "log level: debug, info, warn or error")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -95,18 +120,15 @@ func runServe(args []string) error {
 		return err
 	}
 	// Flags win over both the file and the environment.
-	if *bind != "" {
-		cfg.Server.Bind = *bind
-	}
-	if *port != 0 {
-		cfg.Server.Port = *port
+	if *socket != "" {
+		cfg.Server.Socket = *socket
 	}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
 
 	log.Info("starting claude-scheduler",
-		"version", version, "config", *configPath, "addr", cfg.Server.Addr())
+		"version", version, "config", *configPath, "socket", cfg.Server.Socket)
 
 	if err := ensureDirs(cfg); err != nil {
 		return err
@@ -124,6 +146,16 @@ func runServe(args []string) error {
 		log.Warn("could not reap orphaned executions", "error", err)
 	} else if n > 0 {
 		log.Info("reaped executions interrupted by a previous shutdown", "count", n)
+	}
+
+	// Expired values are already invisible to queries, so this only
+	// reclaims their space. A startup chore rather than a background loop:
+	// restarts happen often enough, and until one does the only cost is
+	// bytes on disk.
+	if n, err := st.PurgeExpiredKV(context.Background()); err != nil {
+		log.Warn("could not purge expired key/value entries", "error", err)
+	} else if n > 0 {
+		log.Info("purged expired key/value entries", "count", n)
 	}
 
 	warnAboutEnvironment(cfg, log)
@@ -163,8 +195,22 @@ func runServe(args []string) error {
 	}
 	defer sched.Stop()
 
+	// Bound on this goroutine, not inside the serving one, so a failure to
+	// take the socket is reported before readiness rather than as a mystery
+	// exit. It also makes sdnotify.Ready truthful: the socket provably
+	// exists by the time systemd is told the service is up, so
+	// `systemctl start` followed immediately by a CLI command cannot race.
+	ln, err := ipc.Listen(cfg.Server.Socket, cfg.Server.SocketMode.Std())
+	if err != nil {
+		return err
+	}
+	// Shutdown unlinks the socket through the listener; this covers the
+	// paths that return before Shutdown runs.
+	defer ln.Close()
+
 	srv := &http.Server{
-		Addr: cfg.Server.Addr(),
+		// No Addr: Serve ignores it, and a TCP address here would imply one
+		// is listened on.
 		Handler: api.New(cfg, st, log, api.Deps{
 			Executor: exe,
 			Health:   registry,
@@ -173,6 +219,8 @@ func runServe(args []string) error {
 		}).Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		// No WriteTimeout: SSE responses are intentionally long-lived.
+		// IdleTimeout is what reaps idle keep-alive connections, including
+		// the ones `claude-scheduler proxy` holds open on a browser's behalf.
 		IdleTimeout: 120 * time.Second,
 	}
 
@@ -181,7 +229,7 @@ func runServe(args []string) error {
 
 	errs := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errs <- err
 			return
 		}
@@ -192,8 +240,8 @@ func runServe(args []string) error {
 		log.Warn("could not notify systemd of readiness", "error", err)
 	}
 	_ = sdnotify.Status(fmt.Sprintf("listening on %s, %d task(s) scheduled",
-		cfg.Server.Addr(), sched.Count()))
-	log.Info("listening", "url", "http://"+cfg.Server.Addr())
+		cfg.Server.Socket, sched.Count()))
+	log.Info("listening", "socket", cfg.Server.Socket, "mode", cfg.Server.SocketMode)
 
 	select {
 	case err := <-errs:
@@ -265,9 +313,11 @@ func warnAboutEnvironment(cfg config.Config, log *slog.Logger) {
 	if os.Getenv("HOME") == "" {
 		log.Warn("HOME is unset; the claude and aws CLIs will not find their credentials")
 	}
-	if !cfg.Server.IsLoopback() {
-		log.Warn("listening beyond loopback: the API can trigger code execution as this user",
-			"bind", cfg.Server.Bind, "auth", cfg.Server.Token != "")
+	// A config carried over from the TCP era loads fine, because yaml.v3
+	// ignores unknown keys, so the retired settings are called out rather
+	// than silently dropped.
+	for _, d := range cfg.Deprecations() {
+		log.Warn("obsolete configuration", "detail", d)
 	}
 }
 
