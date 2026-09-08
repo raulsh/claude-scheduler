@@ -24,7 +24,7 @@ Or build it yourself:
 
 ```sh
 make deb
-sudo dpkg -i dist/claude-scheduler_0.1.0_amd64.deb
+sudo dpkg -i dist/claude-scheduler_0.2.0_amd64.deb
 ```
 
 `postinst` figures out which user to run as (from `SUDO_USER`) and writes a
@@ -247,7 +247,7 @@ architectures, packages the `.deb`, and attaches the artifacts to the GitHub
 release for that tag:
 
 ```sh
-git tag -a v0.1.0 -m 'v0.1.0' && git push origin v0.1.0
+git tag -a v0.2.0 -m 'v0.2.0' && git push origin v0.2.0
 ```
 
 Every pull request builds the same artifacts with `--snapshot` and uploads the

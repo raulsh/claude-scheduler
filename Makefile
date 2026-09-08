@@ -1,6 +1,6 @@
 # claude-scheduler build and packaging.
 
-VERSION    ?= 0.1.0
+VERSION    ?= 0.2.0
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 ARCH       := $(shell dpkg --print-architecture)
 MAINTAINER ?= raulsh <54923646+raulsh@users.noreply.github.com>
