@@ -28,6 +28,17 @@ jobs:
       # The SPA is embedded with go:embed, so it is built before the Go build.
       - run: make ui
 
+      # internal/webui/dist/index.html is tracked so `go build` works on a
+      # fresh clone, and the Vite build rewrites it with the current asset
+      # hashes. A stale copy here means a tagged release would fail
+      # GoReleaser's clean-tree check, so catch it on the pull request.
+      - name: Embedded index.html is current
+        run: |
+          git diff --exit-code -- internal/webui/dist/index.html || {
+            echo "::error::internal/webui/dist/index.html is stale - run 'make ui' and commit the result"
+            exit 1
+          }
+
       - run: make check
 
   package:
