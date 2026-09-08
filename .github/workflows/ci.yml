@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: gofmt, vet, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # The SPA is embedded with go:embed, so it is built before the Go build.
+      - run: make ui
+
+      - run: make check
+
+  package:
+    name: deb
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Same path a real release takes, minus publishing, so packaging
+      # breakage surfaces on the pull request rather than on the tag.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean
+
+      - name: Verify package metadata
+        run: dpkg-deb --info dist/*.deb
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: claude-scheduler-deb
+          path: dist/*.deb
+          if-no-files-found: error
+          retention-days: 14

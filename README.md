@@ -13,6 +13,15 @@ This service makes those dependencies first-class, checked, and visible.
 
 ## Install
 
+Download the `.deb` from the [latest release](https://github.com/raulsh/claude-scheduler/releases/latest)
+(`amd64` and `arm64` are published):
+
+```sh
+sudo dpkg -i claude-scheduler_*_amd64.deb
+```
+
+Or build it yourself:
+
 ```sh
 make deb
 sudo dpkg -i dist/claude-scheduler_0.1.0_amd64.deb
@@ -120,11 +129,25 @@ make build     # static binary with the SPA embedded
 make check     # gofmt, vet, tests
 make run       # run against ./dev-config.yaml
 make dev       # Vite dev server, proxying /api to :9977
+make snapshot  # build the release artifacts locally, publishing nothing
 ```
 
 The frontend lives in `web/` and builds into `internal/webui/dist`, which is
 embedded with `go:embed`. `CGO_ENABLED=0` throughout, so the package ships a
 single static binary and SQLite comes from `modernc.org/sqlite`.
+
+## Releasing
+
+Pushing a `v*` tag runs [GoReleaser](.goreleaser.yaml) in CI, which builds both
+architectures, packages the `.deb`, and attaches the artifacts to the GitHub
+release for that tag:
+
+```sh
+git tag -a v0.1.0 -m 'v0.1.0' && git push origin v0.1.0
+```
+
+Every pull request builds the same artifacts with `--snapshot` and uploads the
+`.deb`, so packaging breakage shows up before the tag exists.
 
 ## Notes on the claude CLI
 

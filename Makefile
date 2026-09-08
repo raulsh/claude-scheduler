@@ -15,7 +15,7 @@ LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)
 # The frontend build output is embedded by internal/webui.
 UI_DIST := internal/webui/dist
 
-.PHONY: all build ui test vet fmt check deb clean dev run install-local uninstall-local help
+.PHONY: all build ui test vet fmt check deb snapshot clean dev run install-local uninstall-local help
 
 all: build
 
@@ -75,6 +75,11 @@ deb: build
 	@echo
 	@dpkg-deb --info $(DEB) | head -12
 	@echo "package: $(DEB)"
+
+## snapshot: build the full release set locally (both arches, .deb), no publish
+snapshot:
+	@command -v goreleaser >/dev/null || { echo "goreleaser is required: https://goreleaser.com/install"; exit 1; }
+	goreleaser release --snapshot --clean
 
 ## dev: run the Vite dev server against a locally running scheduler
 dev:

@@ -1,0 +1,118 @@
+# Release build for claude-scheduler.
+#
+# The .deb built here and the one `make deb` builds locally share the inputs
+# that decide how the package behaves: packaging/systemd for the unit,
+# packaging/config.yaml for the conffile, packaging/debian for the maintainer
+# scripts. Only the control metadata is stated twice - here, and in
+# packaging/debian/control.in - so a change to Depends or the description
+# belongs in both.
+version: 2
+
+project_name: claude-scheduler
+
+before:
+  hooks:
+    # The SPA is embedded with go:embed, so it has to be built before the Go
+    # build runs. Needs Node >= 20.19.
+    - make ui
+
+builds:
+  - id: claude-scheduler
+    main: ./cmd/claude-scheduler
+    binary: claude-scheduler
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .ShortCommit }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  # For anyone not on a Debian derivative: the binary plus the unit and config
+  # to place by hand.
+  - id: tarball
+    formats:
+      - tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_linux_{{ .Arch }}"
+    files:
+      - README.md
+      - src: packaging/config.yaml
+        dst: config.yaml
+      - src: packaging/systemd/claude-scheduler.service
+        dst: claude-scheduler.service
+
+nfpms:
+  - id: deb
+    package_name: claude-scheduler
+    formats:
+      - deb
+    file_name_template: "{{ .PackageName }}_{{ .Version }}_{{ .Arch }}"
+    maintainer: raulsh <54923646+raulsh@users.noreply.github.com>
+    homepage: https://github.com/raulsh/claude-scheduler
+    section: utils
+    priority: optional
+    description: |-
+      Scheduled Claude Code tasks with dependency healthchecks
+      claude-scheduler runs Claude Code (the claude CLI) on a cron schedule behind
+      a local web UI, streaming each run's output live and keeping its history.
+
+      Before every execution it checks the dependencies that task declared - AWS
+      CLI profile logins, MCP server status, required binaries - and refuses to run
+      against a broken environment rather than burning tokens on a dead
+      credential. Failures raise a desktop notification.
+
+      The claude CLI itself is not packaged for Debian and therefore cannot be a
+      dependency. Install it separately; the service reports a clear warning until
+      it is found.
+    dependencies:
+      - systemd
+    recommends:
+      - awscli
+      - libnotify-bin
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/claude-scheduler.service
+        dst: /lib/systemd/system/claude-scheduler.service
+      - src: packaging/config.yaml
+        dst: /etc/claude-scheduler/config.yaml
+        type: config
+    scripts:
+      postinstall: packaging/debian/postinst
+      preremove: packaging/debian/prerm
+      postremove: packaging/debian/postrm
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+
+release:
+  footer: |
+    ## Install
+
+    ```sh
+    curl -fLO https://github.com/raulsh/claude-scheduler/releases/download/{{ .Tag }}/claude-scheduler_{{ .Version }}_amd64.deb
+    sudo dpkg -i claude-scheduler_{{ .Version }}_amd64.deb
+    xdg-open http://127.0.0.1:9977
+    ```
+
+    The install picks the service user from `SUDO_USER` and writes a systemd
+    drop-in with that user's `HOME` and session bus. The `claude` CLI is not a
+    Debian package, so install it separately.
