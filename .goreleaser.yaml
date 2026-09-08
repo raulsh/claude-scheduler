@@ -103,9 +103,11 @@ snapshot:
   version_template: "{{ incpatch .Version }}-snapshot"
 
 changelog:
-  use: github
+  # The git log, not the compare API: abbrev is ignored for the github
+  # backend, which prints the full 40-character hash and the author on every
+  # line. Here abbrev drops the hash and leaves the subject.
+  use: git
   sort: asc
-  # Drop the commit hash: the subject line is the useful part in the notes.
   abbrev: -1
   filters:
     exclude:
