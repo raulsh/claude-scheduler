@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+UNIT=claude-scheduler.service
+
+case "$1" in
+    remove|deconfigure)
+        if [ -d /run/systemd/system ]; then
+            systemctl stop "$UNIT" >/dev/null 2>&1 || true
+        fi
+        ;;
+    upgrade|failed-upgrade)
+        # The postinst restarts the service; stopping here would add an
+        # unnecessary gap in coverage.
+        ;;
+    *)
+        echo "prerm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

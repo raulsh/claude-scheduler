@@ -1,0 +1,14 @@
+/bin/
+/build/
+/dist/
+/.dev/
+
+# Vite build output, embedded at build time. The placeholder index.html is
+# tracked so the go:embed directive resolves on a fresh clone.
+/internal/webui/dist/*
+!/internal/webui/dist/index.html
+
+/web/node_modules/
+*.db
+*.db-shm
+*.db-wal

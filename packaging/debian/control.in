@@ -1,0 +1,22 @@
+Package: claude-scheduler
+Version: @VERSION@
+Section: utils
+Priority: optional
+Architecture: @ARCH@
+Maintainer: @MAINTAINER@
+Installed-Size: @SIZE@
+Depends: systemd
+Recommends: awscli, libnotify-bin
+Homepage: https://github.com/raulsh/claude-scheduler
+Description: Scheduled Claude Code tasks with dependency healthchecks
+ claude-scheduler runs Claude Code (the claude CLI) on a cron schedule behind
+ a local web UI, streaming each run's output live and keeping its history.
+ .
+ Before every execution it checks the dependencies that task declared - AWS
+ CLI profile logins, MCP server status, required binaries - and refuses to run
+ against a broken environment rather than burning tokens on a dead
+ credential. Failures raise a desktop notification.
+ .
+ The claude CLI itself is not packaged for Debian and therefore cannot be a
+ dependency. Install it separately; the service reports a clear warning until
+ it is found.

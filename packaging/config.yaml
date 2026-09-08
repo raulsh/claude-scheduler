@@ -1,0 +1,50 @@
+# claude-scheduler configuration.
+#
+# Machine-specific values (the service user, HOME, and the path to the claude
+# CLI) are NOT set here. The package writes those into a systemd drop-in at
+# /etc/systemd/system/claude-scheduler.service.d/10-user.conf during install,
+# so this file stays untouched across upgrades.
+
+server:
+  # Loopback only. The API can start Claude Code runs, which execute code as
+  # the service user, so binding beyond loopback requires a token below.
+  bind: 127.0.0.1
+  port: 9977
+  # token: ""   # required if bind is not loopback
+
+paths:
+  data_dir: /var/lib/claude-scheduler
+  log_dir: /var/log/claude-scheduler
+
+binaries:
+  # Left empty so the service discovers them at startup. Set explicitly to
+  # pin a version or an unusual install location.
+  claude: ""
+  aws: ""
+
+executor:
+  max_concurrent: 2
+  default_timeout: 30m
+  default_max_budget_usd: 1.0
+  # How stale a missed occurrence may be and still run once after downtime.
+  # Set to 0 to never catch up.
+  misfire_grace: 15m
+
+health:
+  aws_ttl: 5m
+  # `claude mcp list` health-checks every server and can take up to a minute,
+  # so its result is cached rather than re-run per execution.
+  mcp_ttl: 2m
+  binary_ttl: 10m
+  check_timeout: 90s
+
+notify:
+  desktop:
+    enabled: true
+  slack:
+    enabled: false
+    webhook_url: ""
+
+retention:
+  transcript_days: 30
+  execution_days: 365

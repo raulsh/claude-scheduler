@@ -1,0 +1,32 @@
+[Unit]
+Description=Claude Scheduler - scheduled Claude Code tasks with dependency healthchecks
+Documentation=https://github.com/raulsh/claude-scheduler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/bin/claude-scheduler serve --config /etc/claude-scheduler/config.yaml
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+# State and logs, created and owned by the service user automatically.
+StateDirectory=claude-scheduler
+LogsDirectory=claude-scheduler
+ConfigurationDirectory=claude-scheduler
+
+# The service user, HOME, and session bus are machine-specific and are
+# written by the package's postinst into:
+#   /etc/systemd/system/claude-scheduler.service.d/10-user.conf
+#
+# ProtectHome and ProtectSystem=strict are deliberately NOT set: the whole
+# purpose of this service is reading the user's ~/.claude credentials and
+# ~/.aws SSO cache, and the claude CLI writes session state under $HOME.
+NoNewPrivileges=yes
+PrivateTmp=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+
+[Install]
+WantedBy=multi-user.target

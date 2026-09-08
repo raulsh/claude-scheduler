@@ -1,0 +1,15 @@
+# Local development configuration. Not shipped in the package.
+server:
+  bind: 127.0.0.1
+  port: 9977
+paths:
+  data_dir: ./.dev/data
+  log_dir: ./.dev/logs
+executor:
+  max_concurrent: 2
+  default_timeout: 10m
+  default_max_budget_usd: 0.5
+  misfire_grace: 0   # no catch-up in development
+notify:
+  desktop:
+    enabled: true

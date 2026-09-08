@@ -1,0 +1,42 @@
+#!/bin/sh
+set -e
+
+UNIT=claude-scheduler.service
+DROPIN_DIR=/etc/systemd/system/claude-scheduler.service.d
+
+case "$1" in
+    remove)
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+
+    purge)
+        # The drop-in is generated, not shipped, so dpkg will not remove it.
+        rm -f "$DROPIN_DIR/10-user.conf"
+        rmdir --ignore-fail-on-non-empty "$DROPIN_DIR" 2>/dev/null || true
+
+        if command -v deb-systemd-helper >/dev/null 2>&1; then
+            deb-systemd-helper purge "$UNIT" >/dev/null || true
+            deb-systemd-helper unmask "$UNIT" >/dev/null || true
+        fi
+
+        # Scheduled task definitions and execution history are user data, so
+        # they go only on purge, never on a plain remove.
+        rm -rf /var/lib/claude-scheduler /var/log/claude-scheduler
+
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+
+    upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument '$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

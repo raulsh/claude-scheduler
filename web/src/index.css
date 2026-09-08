@@ -1,0 +1,404 @@
+@import "tailwindcss";
+
+/* Design tokens.
+   Light is defined on bare :root so no colour has its only definition inside
+   a media query. Dark is redefined under prefers-color-scheme (guarded so an
+   explicit light choice wins) and again under [data-theme="dark"] so the
+   toggle wins in both directions. */
+:root {
+  --bg: oklch(98.5% 0.002 250);
+  --surface: oklch(100% 0 0);
+  --surface-2: oklch(96.8% 0.003 250);
+  --border: oklch(91% 0.005 250);
+  --border-strong: oklch(85% 0.008 250);
+  --text: oklch(24% 0.015 260);
+  --text-muted: oklch(52% 0.012 260);
+  --text-faint: oklch(64% 0.01 260);
+  --accent: oklch(55% 0.16 265);
+  --accent-soft: oklch(95% 0.03 265);
+
+  /* Status palette. Success is green and the failure family is warm, which
+     keeps the at-a-glance read the user asked for, but blocked and
+     rate-limited stay visually distinct because they call for different
+     actions than a plain failure. */
+  --st-success: oklch(64% 0.15 155);
+  --st-failure: oklch(60% 0.19 22);
+  --st-blocked: oklch(72% 0.15 75);
+  --st-rate: oklch(60% 0.17 300);
+  --st-timeout: oklch(67% 0.16 50);
+  --st-cancelled: oklch(65% 0.02 260);
+  --st-running: oklch(62% 0.15 245);
+  --st-skipped: oklch(78% 0.01 260);
+  --st-empty: oklch(89% 0.005 260);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: oklch(17% 0.008 260);
+    --surface: oklch(21% 0.009 260);
+    --surface-2: oklch(25% 0.01 260);
+    --border: oklch(29% 0.012 260);
+    --border-strong: oklch(36% 0.014 260);
+    --text: oklch(94% 0.004 260);
+    --text-muted: oklch(70% 0.012 260);
+    --text-faint: oklch(56% 0.012 260);
+    --accent: oklch(70% 0.15 265);
+    --accent-soft: oklch(28% 0.04 265);
+
+    --st-success: oklch(70% 0.16 155);
+    --st-failure: oklch(66% 0.19 22);
+    --st-blocked: oklch(78% 0.15 75);
+    --st-rate: oklch(70% 0.17 300);
+    --st-timeout: oklch(73% 0.16 50);
+    --st-cancelled: oklch(58% 0.02 260);
+    --st-running: oklch(70% 0.15 245);
+    --st-skipped: oklch(42% 0.01 260);
+    --st-empty: oklch(31% 0.008 260);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: oklch(17% 0.008 260);
+  --surface: oklch(21% 0.009 260);
+  --surface-2: oklch(25% 0.01 260);
+  --border: oklch(29% 0.012 260);
+  --border-strong: oklch(36% 0.014 260);
+  --text: oklch(94% 0.004 260);
+  --text-muted: oklch(70% 0.012 260);
+  --text-faint: oklch(56% 0.012 260);
+  --accent: oklch(70% 0.15 265);
+  --accent-soft: oklch(28% 0.04 265);
+
+  --st-success: oklch(70% 0.16 155);
+  --st-failure: oklch(66% 0.19 22);
+  --st-blocked: oklch(78% 0.15 75);
+  --st-rate: oklch(70% 0.17 300);
+  --st-timeout: oklch(73% 0.16 50);
+  --st-cancelled: oklch(58% 0.02 260);
+  --st-running: oklch(70% 0.15 245);
+  --st-skipped: oklch(42% 0.01 260);
+  --st-empty: oklch(31% 0.008 260);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-border-subtle: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-fg: var(--text);
+  --color-fg-muted: var(--text-muted);
+  --color-fg-faint: var(--text-faint);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-st-success: var(--st-success);
+  --color-st-failure: var(--st-failure);
+  --color-st-blocked: var(--st-blocked);
+  --color-st-rate: var(--st-rate);
+  --color-st-timeout: var(--st-timeout);
+  --color-st-cancelled: var(--st-cancelled);
+  --color-st-running: var(--st-running);
+  --color-st-skipped: var(--st-skipped);
+  --color-st-empty: var(--st-empty);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+html {
+  color-scheme: light dark;
+}
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Durations, costs and counts are compared down columns, so they get
+   tabular figures everywhere. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* A gentle pulse for in-flight work. Respects reduced-motion. */
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.animate-soft-pulse {
+  animation: soft-pulse 1.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-soft-pulse { animation: none; }
+}
+
+/* Scrollbars that do not fight the dark theme. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+/* A blocked run is cut by a diagonal line, so it is distinguishable from a
+   failure without depending on hue. */
+.blocked-slash {
+  background-image: linear-gradient(
+    135deg,
+    transparent 42%,
+    var(--surface) 42%,
+    var(--surface) 58%,
+    transparent 58%
+  );
+}
+
+/* ---------------------------------------------------------------------------
+   Markdown
+
+   Hand-written rather than @tailwindcss/typography: the prose defaults are
+   tuned for article pages, and here the content sits inside a dense
+   monitoring transcript. Every colour comes from the same tokens as the rest
+   of the app, so light and dark follow automatically.
+   --------------------------------------------------------------------------- */
+
+.md {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+/* Vertical rhythm comes from a single rule so nothing double-spaces, and the
+   first and last child sit flush with their container. */
+.md > * + * { margin-top: 0.7em; }
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 1.3em;
+}
+.md h1 { font-size: 1.25rem; }
+.md h2 { font-size: 1.125rem; }
+.md h3 { font-size: 1rem; }
+.md h4, .md h5, .md h6 { font-size: 0.9375rem; }
+.md > h1:first-child, .md > h2:first-child, .md > h3:first-child { margin-top: 0; }
+
+.md strong { font-weight: 600; }
+.md em { font-style: italic; }
+.md del { color: var(--text-faint); }
+
+.md ul, .md ol { padding-left: 1.35em; }
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md li + li { margin-top: 0.25em; }
+.md li > ul, .md li > ol { margin-top: 0.25em; }
+
+/* GFM task lists: no bullet, and the box aligns with the text baseline. */
+.md li:has(> input[type="checkbox"]) { list-style: none; margin-left: -1.35em; }
+.md input[type="checkbox"] {
+  margin-right: 0.45em;
+  vertical-align: -0.1em;
+  accent-color: var(--accent);
+  /* Disabled only to make them read-only; they should not look inert. */
+  opacity: 1;
+}
+
+.md a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in oklch, var(--accent) 40%, transparent);
+}
+.md a:hover { text-decoration-color: var(--accent); }
+
+/* Inline code. Deliberately not styled like a code block: it should read as
+   part of the sentence. */
+.md :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1em 0.32em;
+  overflow-wrap: break-word;
+}
+
+.md blockquote {
+  border-left: 2px solid var(--border-strong);
+  padding-left: 0.85em;
+  color: var(--text-muted);
+}
+
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin-block: 1.2em;
+}
+
+.md img {
+  max-width: 100%;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+
+/* Tables scroll inside their own container so a wide one never makes the
+   page scroll sideways. */
+.md-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+}
+.md th, .md td {
+  text-align: left;
+  padding: 0.4em 0.65em;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+/* Body cells wrap: the tables Claude writes are mostly prose, and forcing
+   them onto one line would push every table into horizontal scrolling.
+   Headers stay on one line because they are short by nature. */
+.md th {
+  background: var(--surface-2);
+  font-weight: 600;
+  white-space: nowrap;
+}
+/* A cell holding only inline code is an identifier, so keep it intact. */
+.md td:has(> code:only-child) { white-space: nowrap; }
+.md tbody tr:last-child td { border-bottom: 0; }
+
+/* Fenced code blocks. */
+.md-code {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--bg);
+}
+.md-code-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.6875rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+.md-code-bar button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  /* Revealed on hover, but always reachable by keyboard. */
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.md-code:hover .md-code-bar button,
+.md-code-bar button:focus-visible { opacity: 1; }
+.md-code-bar button:hover { background: var(--surface); color: var(--text); }
+
+.md-code pre {
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  overflow-x: auto;
+  font-family: var(--font-mono);
+  font-size: 0.78125rem;
+  line-height: 1.55;
+}
+.md-code pre code { font-family: inherit; }
+
+/* Syntax highlighting, from the same token palette so it stays coherent in
+   both themes instead of importing a highlight.js stylesheet. */
+.hljs-comment, .hljs-quote { color: var(--text-faint); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-literal, .hljs-section, .hljs-doctag,
+.hljs-type, .hljs-name, .hljs-strong {
+  color: oklch(62% 0.17 300);
+}
+.hljs-string, .hljs-title, .hljs-attr, .hljs-attribute, .hljs-symbol,
+.hljs-bullet, .hljs-addition {
+  color: oklch(60% 0.14 155);
+}
+.hljs-number, .hljs-meta, .hljs-built_in, .hljs-builtin-name, .hljs-params {
+  color: oklch(60% 0.15 250);
+}
+.hljs-variable, .hljs-template-variable, .hljs-selector-attr, .hljs-selector-pseudo,
+.hljs-link, .hljs-regexp {
+  color: oklch(62% 0.15 50);
+}
+.hljs-deletion { color: oklch(58% 0.19 22); }
+.hljs-emphasis { font-style: italic; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --hl-shift: 1;
+  }
+  :root:not([data-theme="light"]) .hljs-keyword,
+  :root:not([data-theme="light"]) .hljs-selector-tag,
+  :root:not([data-theme="light"]) .hljs-literal,
+  :root:not([data-theme="light"]) .hljs-section,
+  :root:not([data-theme="light"]) .hljs-doctag,
+  :root:not([data-theme="light"]) .hljs-type,
+  :root:not([data-theme="light"]) .hljs-name,
+  :root:not([data-theme="light"]) .hljs-strong { color: oklch(75% 0.16 300); }
+  :root:not([data-theme="light"]) .hljs-string,
+  :root:not([data-theme="light"]) .hljs-title,
+  :root:not([data-theme="light"]) .hljs-attr,
+  :root:not([data-theme="light"]) .hljs-attribute,
+  :root:not([data-theme="light"]) .hljs-symbol,
+  :root:not([data-theme="light"]) .hljs-bullet,
+  :root:not([data-theme="light"]) .hljs-addition { color: oklch(76% 0.15 155); }
+  :root:not([data-theme="light"]) .hljs-number,
+  :root:not([data-theme="light"]) .hljs-meta,
+  :root:not([data-theme="light"]) .hljs-built_in,
+  :root:not([data-theme="light"]) .hljs-builtin-name,
+  :root:not([data-theme="light"]) .hljs-params { color: oklch(74% 0.14 250); }
+  :root:not([data-theme="light"]) .hljs-variable,
+  :root:not([data-theme="light"]) .hljs-template-variable,
+  :root:not([data-theme="light"]) .hljs-selector-attr,
+  :root:not([data-theme="light"]) .hljs-selector-pseudo,
+  :root:not([data-theme="light"]) .hljs-link,
+  :root:not([data-theme="light"]) .hljs-regexp { color: oklch(78% 0.14 50); }
+  :root:not([data-theme="light"]) .hljs-deletion { color: oklch(70% 0.18 22); }
+}
+
+:root[data-theme="dark"] .hljs-keyword,
+:root[data-theme="dark"] .hljs-selector-tag,
+:root[data-theme="dark"] .hljs-literal,
+:root[data-theme="dark"] .hljs-section,
+:root[data-theme="dark"] .hljs-doctag,
+:root[data-theme="dark"] .hljs-type,
+:root[data-theme="dark"] .hljs-name,
+:root[data-theme="dark"] .hljs-strong { color: oklch(75% 0.16 300); }
+:root[data-theme="dark"] .hljs-string,
+:root[data-theme="dark"] .hljs-title,
+:root[data-theme="dark"] .hljs-attr,
+:root[data-theme="dark"] .hljs-attribute,
+:root[data-theme="dark"] .hljs-symbol,
+:root[data-theme="dark"] .hljs-bullet,
+:root[data-theme="dark"] .hljs-addition { color: oklch(76% 0.15 155); }
+:root[data-theme="dark"] .hljs-number,
+:root[data-theme="dark"] .hljs-meta,
+:root[data-theme="dark"] .hljs-built_in,
+:root[data-theme="dark"] .hljs-builtin-name,
+:root[data-theme="dark"] .hljs-params { color: oklch(74% 0.14 250); }
+:root[data-theme="dark"] .hljs-variable,
+:root[data-theme="dark"] .hljs-template-variable,
+:root[data-theme="dark"] .hljs-selector-attr,
+:root[data-theme="dark"] .hljs-selector-pseudo,
+:root[data-theme="dark"] .hljs-link,
+:root[data-theme="dark"] .hljs-regexp { color: oklch(78% 0.14 50); }
+:root[data-theme="dark"] .hljs-deletion { color: oklch(70% 0.18 22); }
