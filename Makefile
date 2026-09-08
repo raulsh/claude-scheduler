@@ -58,6 +58,7 @@ deb: build
 	install -D -m 0755 $(BIN) $(STAGE)/usr/bin/$(PKG)
 	install -D -m 0644 packaging/systemd/$(PKG).service $(STAGE)/lib/systemd/system/$(PKG).service
 	install -D -m 0644 packaging/config.yaml $(STAGE)/etc/$(PKG)/config.yaml
+	install -D -m 0644 LICENSE $(STAGE)/usr/share/doc/$(PKG)/copyright
 	install -D -m 0644 packaging/debian/conffiles $(STAGE)/DEBIAN/conffiles
 	install -D -m 0755 packaging/debian/postinst $(STAGE)/DEBIAN/postinst
 	install -D -m 0755 packaging/debian/prerm    $(STAGE)/DEBIAN/prerm
