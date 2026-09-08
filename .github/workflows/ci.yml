@@ -66,8 +66,15 @@ jobs:
           version: "~> v2"
           args: release --snapshot --clean
 
+      # One archive per invocation: dpkg-deb reads a second argument as the
+      # name of a control component, not as another package.
       - name: Verify package metadata
-        run: dpkg-deb --info dist/*.deb
+        run: |
+          for deb in dist/*.deb; do
+            echo "== $deb"
+            dpkg-deb --info "$deb"
+            dpkg-deb --contents "$deb"
+          done
 
       - uses: actions/upload-artifact@v7
         with:
